@@ -1,0 +1,529 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Hồ sơ tài khoản người dùng, vai trò (admin, teacher, accountant, medical) và trạng thái kích hoạt",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "email": { "type": "string", "maxLength": 256 },
+        "displayName": { "type": "string", "maxLength": 120 },
+        "role": { "type": "string", "enum": ["admin", "teacher", "accountant", "medical"] },
+        "status": { "type": "string", "enum": ["active", "suspended", "locked", "revoked", "pending"] },
+        "assignedClassId": { "type": "string", "maxLength": 64 },
+        "linkedStudentId": { "type": "string", "maxLength": 64 },
+        "joinedInviteCode": { "type": "string", "maxLength": 32 },
+        "lastLoginAtIso": { "type": "string", "maxLength": 48 },
+        "schoolId": { "type": "string", "enum": ["THCS_DONG_THANH"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "displayName", "role", "status", "assignedClassId", "linkedStudentId", "joinedInviteCode", "schoolId", "createdAt", "updatedAt"]
+    },
+    "AccountAccess": {
+      "title": "AccountAccess",
+      "description": "Danh sách phân quyền và trạng thái khóa/mở tài khoản theo Email do Quản trị viên quản lý",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "email": { "type": "string", "maxLength": 256 },
+        "displayName": { "type": "string", "maxLength": 120 },
+        "role": { "type": "string", "enum": ["admin", "teacher", "accountant", "medical"] },
+        "status": { "type": "string", "enum": ["active", "suspended", "locked", "revoked", "pending"] },
+        "assignedClassId": { "type": "string", "maxLength": 64 },
+        "joinedInviteCode": { "type": "string", "maxLength": 32 },
+        "uid": { "type": "string", "maxLength": 128 },
+        "lastLoginAtIso": { "type": "string", "maxLength": 48 },
+        "schoolId": { "type": "string", "enum": ["THCS_DONG_THANH"] },
+        "visibility": { "type": "string", "enum": ["school"] },
+        "updatedByUid": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "email", "displayName", "role", "status", "assignedClassId", "joinedInviteCode", "uid", "lastLoginAtIso", "schoolId", "visibility", "updatedByUid", "createdAt", "updatedAt"]
+    },
+    "SchoolClass": {
+      "title": "SchoolClass",
+      "description": "Thông tin lớp học thuộc 4 khối 6, 7, 8, 9 của Trường THCS Đông Thạnh",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "maxLength": 32 },
+        "grade": { "type": "number", "enum": [6, 7, 8, 9] },
+        "order": { "type": "number" },
+        "teacherName": { "type": "string", "maxLength": 120 },
+        "teacherEmail": { "type": "string", "maxLength": 256 },
+        "studentCount": { "type": "number" },
+        "active": { "type": "boolean" },
+        "env": { "type": "string", "enum": ["production", "sandbox"] },
+        "schoolId": { "type": "string", "enum": ["THCS_DONG_THANH"] },
+        "visibility": { "type": "string", "enum": ["school"] },
+        "updatedByUid": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "name", "grade", "order", "teacherName", "teacherEmail", "studentCount", "active", "env", "schoolId", "visibility", "updatedByUid", "createdAt", "updatedAt"]
+    },
+    "Student": {
+      "title": "Student",
+      "description": "Học sinh bán trú gắn với lớp, khối, giới tính và mã QR điểm danh",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "studentCode": { "type": "string", "maxLength": 32 },
+        "fullName": { "type": "string", "maxLength": 120 },
+        "classId": { "type": "string", "maxLength": 64 },
+        "className": { "type": "string", "maxLength": 32 },
+        "grade": { "type": "number", "enum": [6, 7, 8, 9] },
+        "gender": { "type": "string", "maxLength": 16 },
+        "qrCode": { "type": "string", "maxLength": 128 },
+        "parentName": { "type": "string", "maxLength": 120 },
+        "parentUid": { "type": "string", "maxLength": 128 },
+        "active": { "type": "boolean" },
+        "env": { "type": "string", "enum": ["production", "sandbox"] },
+        "schoolId": { "type": "string", "enum": ["THCS_DONG_THANH"] },
+        "visibility": { "type": "string", "enum": ["school"] },
+        "updatedByUid": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "studentCode", "fullName", "classId", "className", "grade", "gender", "qrCode", "parentName", "parentUid", "active", "env", "schoolId", "visibility", "updatedByUid", "createdAt", "updatedAt"]
+    },
+    "MealRegistration": {
+      "title": "MealRegistration",
+      "description": "Bản ghi đăng ký suất ăn duy nhất cho mỗi học sinh trong một ngày (Học sinh + Ngày)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "date": { "type": "string", "maxLength": 10, "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+        "studentId": { "type": "string", "maxLength": 64 },
+        "studentCode": { "type": "string", "maxLength": 32 },
+        "studentName": { "type": "string", "maxLength": 120 },
+        "classId": { "type": "string", "maxLength": 64 },
+        "className": { "type": "string", "maxLength": 32 },
+        "grade": { "type": "number", "enum": [6, 7, 8, 9] },
+        "status": { "type": "string", "enum": ["eating", "not_eating", "unregistered"] },
+        "updatedByUid": { "type": "string", "maxLength": 128 },
+        "updatedByName": { "type": "string", "maxLength": 120 },
+        "updatedByRole": { "type": "string", "enum": ["teacher", "admin", "medical", "accountant", "system"] },
+        "updatedAtIso": { "type": "string", "maxLength": 48 },
+        "isPostLockAdjustment": { "type": "boolean" },
+        "adjustmentReason": { "type": "string", "maxLength": 500 },
+        "env": { "type": "string", "enum": ["production", "sandbox"] },
+        "schoolId": { "type": "string", "enum": ["THCS_DONG_THANH"] },
+        "visibility": { "type": "string", "enum": ["school"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "date", "studentId", "studentCode", "studentName", "classId", "className", "grade", "status", "updatedByUid", "updatedByName", "updatedByRole", "updatedAtIso", "isPostLockAdjustment", "adjustmentReason", "env", "schoolId", "visibility", "createdAt", "updatedAt"]
+    },
+    "RegistrationLog": {
+      "title": "RegistrationLog",
+      "description": "Nhật ký lịch sử thay đổi đăng ký suất ăn và quản lý học sinh",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "registrationId": { "type": "string", "maxLength": 128 },
+        "date": { "type": "string", "maxLength": 10 },
+        "studentId": { "type": "string", "maxLength": 64 },
+        "studentName": { "type": "string", "maxLength": 120 },
+        "classId": { "type": "string", "maxLength": 64 },
+        "className": { "type": "string", "maxLength": 32 },
+        "grade": { "type": "number", "enum": [6, 7, 8, 9] },
+        "previousStatus": { "type": "string", "enum": ["eating", "not_eating", "unregistered"] },
+        "newStatus": { "type": "string", "enum": ["eating", "not_eating", "unregistered"] },
+        "actorUid": { "type": "string", "maxLength": 128 },
+        "actorName": { "type": "string", "maxLength": 120 },
+        "actorRole": { "type": "string", "enum": ["teacher", "admin", "medical", "accountant", "system"] },
+        "timestampIso": { "type": "string", "maxLength": 48 },
+        "isAfterCutoff": { "type": "boolean" },
+        "reason": { "type": "string", "maxLength": 500 },
+        "env": { "type": "string", "enum": ["production", "sandbox"] },
+        "schoolId": { "type": "string", "enum": ["THCS_DONG_THANH"] },
+        "visibility": { "type": "string", "enum": ["school"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "registrationId", "date", "studentId", "studentName", "classId", "className", "grade", "previousStatus", "newStatus", "actorUid", "actorName", "actorRole", "timestampIso", "isAfterCutoff", "reason", "env", "schoolId", "visibility", "createdAt"]
+    },
+    "DailyReport": {
+      "title": "DailyReport",
+      "description": "Báo cáo chốt số lượng suất ăn hàng ngày lúc 08:00",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "date": { "type": "string", "maxLength": 10 },
+        "isLocked": { "type": "boolean" },
+        "lockedAtIso": { "type": "string", "maxLength": 48 },
+        "lockedByUid": { "type": "string", "maxLength": 128 },
+        "lockedByName": { "type": "string", "maxLength": 120 },
+        "lockType": { "type": "string", "enum": ["auto_0800", "manual_admin"] },
+        "initialTotalEating": { "type": "number" },
+        "adjustedTotalEating": { "type": "number" },
+        "totalNotEating": { "type": "number" },
+        "totalUnregistered": { "type": "number" },
+        "totalStudents": { "type": "number" },
+        "grade6Eating": { "type": "number" },
+        "grade7Eating": { "type": "number" },
+        "grade8Eating": { "type": "number" },
+        "grade9Eating": { "type": "number" },
+        "adjustmentCount": { "type": "number" },
+        "kitchenConfirmed": { "type": "boolean" },
+        "kitchenConfirmedAtIso": { "type": "string", "maxLength": 48 },
+        "kitchenConfirmedByName": { "type": "string", "maxLength": 120 },
+        "kitchenConfirmedByUid": { "type": "string", "maxLength": 128 },
+        "env": { "type": "string", "enum": ["production", "sandbox"] },
+        "schoolId": { "type": "string", "enum": ["THCS_DONG_THANH"] },
+        "visibility": { "type": "string", "enum": ["school"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "date", "isLocked", "lockedAtIso", "lockedByUid", "lockedByName", "lockType", "initialTotalEating", "adjustedTotalEating", "totalNotEating", "totalUnregistered", "totalStudents", "grade6Eating", "grade7Eating", "grade8Eating", "grade9Eating", "adjustmentCount", "kitchenConfirmed", "kitchenConfirmedAtIso", "kitchenConfirmedByName", "kitchenConfirmedByUid", "env", "schoolId", "visibility", "createdAt", "updatedAt"]
+    },
+    "ArchivedYearSnapshot": {
+      "title": "ArchivedYearSnapshot",
+      "description": "Bản lưu trữ danh sách học sinh năm học cũ trước khi xóa toàn bộ để chuyển năm học mới",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "academicYear": { "type": "string", "maxLength": 32 },
+        "archivedAtIso": { "type": "string", "maxLength": 48 },
+        "archivedByUid": { "type": "string", "maxLength": 128 },
+        "archivedByName": { "type": "string", "maxLength": 120 },
+        "scope": { "type": "string", "maxLength": 64 },
+        "studentCount": { "type": "number" },
+        "students": { "type": "array" },
+        "env": { "type": "string", "enum": ["production", "sandbox"] },
+        "schoolId": { "type": "string", "enum": ["THCS_DONG_THANH"] },
+        "visibility": { "type": "string", "enum": ["school"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "academicYear", "archivedAtIso", "archivedByUid", "archivedByName", "scope", "studentCount", "students", "env", "schoolId", "visibility", "createdAt"]
+    },
+    "SchoolSetting": {
+      "title": "SchoolSetting",
+      "description": "Cấu hình giờ khóa sổ mặc định 08:00, năm học và phiên bản danh sách học sinh",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "schoolName": { "type": "string", "maxLength": 200 },
+        "cutoffTime": { "type": "string", "maxLength": 5, "pattern": "^[0-2][0-9]:[0-5][0-9]$" },
+        "academicYear": { "type": "string", "maxLength": 32 },
+        "semester": { "type": "string", "enum": ["HK1", "HK2"] },
+        "autoLockEnabled": { "type": "boolean" },
+        "studentListVersion": { "type": "number" },
+        "lastBulkResetAtIso": { "type": "string", "maxLength": 48 },
+        "schoolId": { "type": "string", "enum": ["THCS_DONG_THANH"] },
+        "visibility": { "type": "string", "enum": ["school"] },
+        "updatedByUid": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "schoolName", "cutoffTime", "academicYear", "semester", "autoLockEnabled", "studentListVersion", "lastBulkResetAtIso", "schoolId", "visibility", "updatedByUid", "createdAt", "updatedAt"]
+    },
+    "DeletionTombstone": {
+      "title": "DeletionTombstone",
+      "description": "Nhật ký đánh dấu xóa vĩnh viễn (tombstone) đồng bộ đa thiết bị để chống khôi phục dữ liệu đã xóa",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "collectionName": { "type": "string", "enum": ["students", "classes", "registrations", "accountAccess", "dailyReports", "archivedYears", "classInvites", "mealPricingRules", "mealPayments", "monthlySettlements"] },
+        "documentId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "deletedAtMs": { "type": "number" },
+        "deletedAtIso": { "type": "string", "maxLength": 48 },
+        "deletedByUid": { "type": "string", "maxLength": 128 },
+        "reason": { "type": "string", "maxLength": 500 },
+        "env": { "type": "string", "enum": ["production", "sandbox"] },
+        "schoolId": { "type": "string", "enum": ["THCS_DONG_THANH"] },
+        "visibility": { "type": "string", "enum": ["school"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "collectionName", "documentId", "deletedAtMs", "deletedAtIso", "deletedByUid", "reason", "env", "schoolId", "visibility", "createdAt", "updatedAt"]
+    },
+    "PermissionGroup": {
+      "title": "PermissionGroup",
+      "description": "Cấu hình phân quyền theo từng nhóm vai trò gắn với các mục quản trị trong hệ thống",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "enum": ["admin", "teacher", "accountant", "medical"] },
+        "label": { "type": "string", "maxLength": 120 },
+        "description": { "type": "string", "maxLength": 300 },
+        "allowedModules": { "type": "array" },
+        "canMarkAttendance": { "type": "boolean" },
+        "canExportReports": { "type": "boolean" },
+        "canManageStudents": { "type": "boolean" },
+        "canShareClassCode": { "type": "boolean" },
+        "canManageMealPricing": { "type": "boolean" },
+        "canCollectPayments": { "type": "boolean" },
+        "updatedAtIso": { "type": "string", "maxLength": 48 },
+        "updatedByUid": { "type": "string", "maxLength": 128 },
+        "schoolId": { "type": "string", "enum": ["THCS_DONG_THANH"] },
+        "visibility": { "type": "string", "enum": ["school"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "label", "description", "allowedModules", "canMarkAttendance", "canExportReports", "canManageStudents", "canShareClassCode", "updatedAtIso", "updatedByUid", "schoolId", "visibility", "createdAt", "updatedAt"]
+    },
+    "ClassInvite": {
+      "title": "ClassInvite",
+      "description": "Mã chia sẻ và liên kết QR cho thành viên nội bộ (GVCN theo lớp, Kế toán, Nhân viên Y tế) vào trực tiếp theo quyền được cấp",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 32, "pattern": "^[A-Z0-9_\\-]+$" },
+        "code": { "type": "string", "maxLength": 32, "pattern": "^[A-Z0-9_\\-]+$" },
+        "role": { "type": "string", "enum": ["teacher", "accountant", "medical"] },
+        "memberLabel": { "type": "string", "maxLength": 120 },
+        "classId": { "type": "string", "maxLength": 64 },
+        "className": { "type": "string", "maxLength": 32 },
+        "grade": { "type": "number", "enum": [6, 7, 8, 9] },
+        "active": { "type": "boolean" },
+        "usageCount": { "type": "number" },
+        "lastUsedByEmail": { "type": "string", "maxLength": 256 },
+        "lastUsedAtIso": { "type": "string", "maxLength": 48 },
+        "createdByUid": { "type": "string", "maxLength": 128 },
+        "createdByName": { "type": "string", "maxLength": 120 },
+        "updatedAtIso": { "type": "string", "maxLength": 48 },
+        "schoolId": { "type": "string", "enum": ["THCS_DONG_THANH"] },
+        "visibility": { "type": "string", "enum": ["school"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "code", "classId", "className", "grade", "active", "usageCount", "lastUsedByEmail", "lastUsedAtIso", "createdByUid", "createdByName", "updatedAtIso", "schoolId", "visibility", "createdAt", "updatedAt"]
+    },
+    "MealPricingRule": {
+      "title": "MealPricingRule",
+      "description": "Cấu hình đơn giá suất ăn bán trú theo thời gian áp dụng và đối tượng (toàn trường, khối, lớp, nhóm học sinh)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "effectiveFrom": { "type": "string", "maxLength": 10, "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+        "pricePerMeal": { "type": "number" },
+        "targetScope": { "type": "string", "enum": ["school", "grade", "class", "student_group"] },
+        "targetGrade": { "type": "number", "enum": [0, 6, 7, 8, 9] },
+        "targetClassId": { "type": "string", "maxLength": 64 },
+        "groupTag": { "type": "string", "maxLength": 64 },
+        "studentIds": { "type": "array" },
+        "note": { "type": "string", "maxLength": 300 },
+        "active": { "type": "boolean" },
+        "createdAtIso": { "type": "string", "maxLength": 48 },
+        "updatedAtIso": { "type": "string", "maxLength": 48 },
+        "updatedByUid": { "type": "string", "maxLength": 128 },
+        "updatedByName": { "type": "string", "maxLength": 120 },
+        "env": { "type": "string", "enum": ["production", "sandbox"] },
+        "schoolId": { "type": "string", "enum": ["THCS_DONG_THANH"] },
+        "visibility": { "type": "string", "enum": ["school"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "effectiveFrom", "pricePerMeal", "targetScope", "targetGrade", "targetClassId", "groupTag", "studentIds", "note", "active", "createdAtIso", "updatedAtIso", "updatedByUid", "updatedByName", "env", "schoolId", "visibility", "createdAt", "updatedAt"]
+    },
+    "MealPricingLog": {
+      "title": "MealPricingLog",
+      "description": "Nhật ký thay đổi đơn giá suất ăn không thể chỉnh sửa",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ruleId": { "type": "string", "maxLength": 128 },
+        "action": { "type": "string", "enum": ["create", "update", "delete"] },
+        "effectiveFrom": { "type": "string", "maxLength": 10 },
+        "previousPrice": { "type": "number" },
+        "newPrice": { "type": "number" },
+        "targetScope": { "type": "string", "enum": ["school", "grade", "class", "student_group"] },
+        "targetLabel": { "type": "string", "maxLength": 120 },
+        "note": { "type": "string", "maxLength": 300 },
+        "actorUid": { "type": "string", "maxLength": 128 },
+        "actorName": { "type": "string", "maxLength": 120 },
+        "timestampIso": { "type": "string", "maxLength": 48 },
+        "env": { "type": "string", "enum": ["production", "sandbox"] },
+        "schoolId": { "type": "string", "enum": ["THCS_DONG_THANH"] },
+        "visibility": { "type": "string", "enum": ["school"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "ruleId", "action", "effectiveFrom", "previousPrice", "newPrice", "targetScope", "targetLabel", "note", "actorUid", "actorName", "timestampIso", "env", "schoolId", "visibility", "createdAt"]
+    },
+    "MealBillingConfig": {
+      "title": "MealBillingConfig",
+      "description": "Cấu hình ngày nghỉ lễ và ý nghĩa ký hiệu X, V, R, ô trống trong bảng báo suất ăn tháng",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "holidays": { "type": "array" },
+        "symbolXLabel": { "type": "string", "maxLength": 120 },
+        "symbolVLabel": { "type": "string", "maxLength": 120 },
+        "symbolRLabel": { "type": "string", "maxLength": 120 },
+        "symbolEmptyLabel": { "type": "string", "maxLength": 120 },
+        "updatedAtIso": { "type": "string", "maxLength": 48 },
+        "updatedByUid": { "type": "string", "maxLength": 128 },
+        "updatedByName": { "type": "string", "maxLength": 120 },
+        "env": { "type": "string", "enum": ["production", "sandbox"] },
+        "schoolId": { "type": "string", "enum": ["THCS_DONG_THANH"] },
+        "visibility": { "type": "string", "enum": ["school"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "holidays", "symbolXLabel", "symbolVLabel", "symbolRLabel", "symbolEmptyLabel", "updatedAtIso", "updatedByUid", "updatedByName", "env", "schoolId", "visibility", "createdAt", "updatedAt"]
+    },
+    "MealPayment": {
+      "title": "MealPayment",
+      "description": "Phiếu thu tiền ăn bán trú theo tháng và học sinh",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "month": { "type": "string", "maxLength": 7, "pattern": "^[0-9]{4}-[0-9]{2}$" },
+        "studentId": { "type": "string", "maxLength": 64 },
+        "studentCode": { "type": "string", "maxLength": 32 },
+        "studentName": { "type": "string", "maxLength": 120 },
+        "classId": { "type": "string", "maxLength": 64 },
+        "className": { "type": "string", "maxLength": 32 },
+        "grade": { "type": "number", "enum": [6, 7, 8, 9] },
+        "amountPaid": { "type": "number" },
+        "paymentDate": { "type": "string", "maxLength": 10, "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+        "paymentMethod": { "type": "string", "enum": ["cash", "transfer"] },
+        "receiptNumber": { "type": "string", "maxLength": 64 },
+        "idempotencyKey": { "type": "string", "maxLength": 96 },
+        "note": { "type": "string", "maxLength": 300 },
+        "collectorUid": { "type": "string", "maxLength": 128 },
+        "collectorName": { "type": "string", "maxLength": 120 },
+        "collectorRole": { "type": "string", "enum": ["admin", "accountant", "teacher", "medical", "system"] },
+        "version": { "type": "number" },
+        "isVoided": { "type": "boolean" },
+        "updatedAtIso": { "type": "string", "maxLength": 48 },
+        "env": { "type": "string", "enum": ["production", "sandbox"] },
+        "schoolId": { "type": "string", "enum": ["THCS_DONG_THANH"] },
+        "visibility": { "type": "string", "enum": ["school"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "month", "studentId", "studentCode", "studentName", "classId", "className", "grade", "amountPaid", "paymentDate", "paymentMethod", "receiptNumber", "idempotencyKey", "note", "collectorUid", "collectorName", "collectorRole", "version", "isVoided", "updatedAtIso", "env", "schoolId", "visibility", "createdAt", "updatedAt"]
+    },
+    "MealPaymentLog": {
+      "title": "MealPaymentLog",
+      "description": "Nhật ký thu, điều chỉnh và hủy phiếu thu tiền ăn bán trú",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "paymentId": { "type": "string", "maxLength": 128 },
+        "month": { "type": "string", "maxLength": 7 },
+        "studentId": { "type": "string", "maxLength": 64 },
+        "studentName": { "type": "string", "maxLength": 120 },
+        "className": { "type": "string", "maxLength": 32 },
+        "action": { "type": "string", "enum": ["create", "update", "void"] },
+        "previousAmount": { "type": "number" },
+        "newAmount": { "type": "number" },
+        "previousMethod": { "type": "string", "enum": ["cash", "transfer", ""] },
+        "newMethod": { "type": "string", "enum": ["cash", "transfer", ""] },
+        "reason": { "type": "string", "maxLength": 300 },
+        "actorUid": { "type": "string", "maxLength": 128 },
+        "actorName": { "type": "string", "maxLength": 120 },
+        "actorRole": { "type": "string", "enum": ["admin", "accountant", "teacher", "medical", "system"] },
+        "timestampIso": { "type": "string", "maxLength": 48 },
+        "env": { "type": "string", "enum": ["production", "sandbox"] },
+        "schoolId": { "type": "string", "enum": ["THCS_DONG_THANH"] },
+        "visibility": { "type": "string", "enum": ["school"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "paymentId", "month", "studentId", "studentName", "className", "action", "previousAmount", "newAmount", "previousMethod", "newMethod", "reason", "actorUid", "actorName", "actorRole", "timestampIso", "env", "schoolId", "visibility", "createdAt"]
+    },
+    "MonthlySettlement": {
+      "title": "MonthlySettlement",
+      "description": "Bản quyết toán khóa sổ tháng tiền ăn bán trú",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "month": { "type": "string", "maxLength": 7, "pattern": "^[0-9]{4}-[0-9]{2}$" },
+        "isLocked": { "type": "boolean" },
+        "lockedAtIso": { "type": "string", "maxLength": 48 },
+        "lockedByUid": { "type": "string", "maxLength": 128 },
+        "lockedByName": { "type": "string", "maxLength": 120 },
+        "unlockedAtIso": { "type": "string", "maxLength": 48 },
+        "unlockedByName": { "type": "string", "maxLength": 120 },
+        "note": { "type": "string", "maxLength": 300 },
+        "totalStudentsSnapshot": { "type": "number" },
+        "totalMealsSnapshot": { "type": "number" },
+        "totalAbsencesSnapshot": { "type": "number" },
+        "totalAmountDueSnapshot": { "type": "number" },
+        "totalAmountPaidSnapshot": { "type": "number" },
+        "env": { "type": "string", "enum": ["production", "sandbox"] },
+        "schoolId": { "type": "string", "enum": ["THCS_DONG_THANH"] },
+        "visibility": { "type": "string", "enum": ["school"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "month", "isLocked", "lockedAtIso", "lockedByUid", "lockedByName", "unlockedAtIso", "unlockedByName", "note", "totalStudentsSnapshot", "totalMealsSnapshot", "totalAbsencesSnapshot", "totalAmountDueSnapshot", "totalAmountPaidSnapshot", "env", "schoolId", "visibility", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Hồ sơ tài khoản người dùng (PII được cô lập cho chính chủ và Admin)"
+    },
+    "/accountAccess/{accessId}": {
+      "schema": { "$ref": "#/entities/AccountAccess" },
+      "description": "Bảng phân quyền và trạng thái tài khoản theo email"
+    },
+    "/permissionGroups/{groupId}": {
+      "schema": { "$ref": "#/entities/PermissionGroup" },
+      "description": "Phân quyền các nhóm vai trò theo từng mục chức năng trong hệ thống"
+    },
+    "/classInvites/{inviteId}": {
+      "schema": { "$ref": "#/entities/ClassInvite" },
+      "description": "Mã mời và liên kết QR chia sẻ cho GVCN vào điểm danh đúng lớp"
+    },
+    "/classes/{classId}": {
+      "schema": { "$ref": "#/entities/SchoolClass" },
+      "description": "Danh sách 61 lớp học (Khối 6, 7, 8, 9)"
+    },
+    "/students/{studentId}": {
+      "schema": { "$ref": "#/entities/Student" },
+      "description": "Danh sách học sinh bán trú đang hoạt động"
+    },
+    "/registrations/{registrationId}": {
+      "schema": { "$ref": "#/entities/MealRegistration" },
+      "description": "Bản ghi đăng ký suất ăn duy nhất theo Học sinh + Ngày"
+    },
+    "/registrationLogs/{logId}": {
+      "schema": { "$ref": "#/entities/RegistrationLog" },
+      "description": "Nhật ký thay đổi đăng ký và điều chỉnh sau khóa sổ"
+    },
+    "/dailyReports/{reportId}": {
+      "schema": { "$ref": "#/entities/DailyReport" },
+      "description": "Báo cáo chốt số lượng lúc 08:00"
+    },
+    "/archivedYears/{archiveId}": {
+      "schema": { "$ref": "#/entities/ArchivedYearSnapshot" },
+      "description": "Bản lưu trữ danh sách học sinh năm học cũ"
+    },
+    "/settings/{settingId}": {
+      "schema": { "$ref": "#/entities/SchoolSetting" },
+      "description": "Thiết lập hệ thống bán trú toàn trường"
+    },
+    "/deletionTombstones/{tombstoneId}": {
+      "schema": { "$ref": "#/entities/DeletionTombstone" },
+      "description": "Đánh dấu xóa vĩnh viễn đồng bộ giữa máy chủ và các thiết bị để ngăn khôi phục dữ liệu cũ"
+    },
+    "/mealPricingRules/{ruleId}": {
+      "schema": { "$ref": "#/entities/MealPricingRule" },
+      "description": "Cấu hình đơn giá suất ăn theo thời gian áp dụng và đối tượng"
+    },
+    "/mealPricingLogs/{logId}": {
+      "schema": { "$ref": "#/entities/MealPricingLog" },
+      "description": "Lịch sử thay đổi đơn giá suất ăn"
+    },
+    "/mealBillingConfigs/{configId}": {
+      "schema": { "$ref": "#/entities/MealBillingConfig" },
+      "description": "Cấu hình ngày nghỉ lễ và nhãn ký hiệu bảng báo suất ăn tháng"
+    },
+    "/mealPayments/{paymentId}": {
+      "schema": { "$ref": "#/entities/MealPayment" },
+      "description": "Khoản thu tiền ăn bán trú theo tháng và học sinh"
+    },
+    "/mealPaymentLogs/{logId}": {
+      "schema": { "$ref": "#/entities/MealPaymentLog" },
+      "description": "Nhật ký lịch sử thu, sửa và hủy phiếu thu tiền ăn"
+    },
+    "/monthlySettlements/{settlementId}": {
+      "schema": { "$ref": "#/entities/MonthlySettlement" },
+      "description": "Khóa sổ quyết toán tiền ăn theo từng tháng"
+    }
+  }
+}

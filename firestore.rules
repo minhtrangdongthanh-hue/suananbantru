@@ -1,0 +1,1204 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Pillar 1: Global Default-Deny Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Global Primitives
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function authEmailKey() {
+      return request.auth.token.email.lower().replace('[^a-z0-9_-]', '_');
+    }
+
+    function isBootstrappedAdmin() {
+      return isVerified() && request.auth.token.email == 'minhtrangdongthanh@gmail.com';
+    }
+
+    function hasUserDoc() {
+      return exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function userDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function hasAccessDoc() {
+      return exists(/databases/$(database)/documents/accountAccess/$(authEmailKey()));
+    }
+
+    function accessDoc() {
+      return get(/databases/$(database)/documents/accountAccess/$(authEmailKey())).data;
+    }
+
+    function isActiveUser() {
+      return isBootstrappedAdmin() || (
+        isVerified() &&
+        hasUserDoc() &&
+        userDoc().status == 'active' &&
+        (!hasAccessDoc() || accessDoc().status == 'active')
+      );
+    }
+
+    function isAdmin() {
+      return isBootstrappedAdmin() || (
+        isActiveUser() &&
+        userDoc().role == 'admin'
+      );
+    }
+
+    function isAccountant() {
+      return isAdmin() || (
+        isActiveUser() &&
+        userDoc().role == 'accountant'
+      );
+    }
+
+    function isMedical() {
+      return isAdmin() || (
+        isActiveUser() &&
+        userDoc().role == 'medical'
+      );
+    }
+
+    function isTeacherForClass(classId) {
+      return isAdmin() || (
+        isActiveUser() &&
+        userDoc().role == 'teacher' &&
+        userDoc().assignedClassId is string &&
+        userDoc().assignedClassId.size() >= 1 &&
+        userDoc().assignedClassId == classId
+      );
+    }
+
+    function hasPermissionGroupDoc(roleName) {
+      return exists(/databases/$(database)/documents/permissionGroups/$(roleName));
+    }
+
+    function groupDoc(roleName) {
+      return get(/databases/$(database)/documents/permissionGroups/$(roleName)).data;
+    }
+
+    function hasGroupModule(moduleId) {
+      return isAdmin() || (
+        isActiveUser() &&
+        hasPermissionGroupDoc(userDoc().role) &&
+        moduleId in groupDoc(userDoc().role).allowedModules
+      );
+    }
+
+    function hasGroupFlag(flagName) {
+      return isAdmin() || (
+        isActiveUser() &&
+        hasPermissionGroupDoc(userDoc().role) &&
+        groupDoc(userDoc().role)[flagName] == true
+      );
+    }
+
+    function hasValidActiveInvite(code) {
+      return code is string &&
+        code.size() >= 4 &&
+        code.size() <= 32 &&
+        isValidId(code) &&
+        exists(/databases/$(database)/documents/classInvites/$(code)) &&
+        get(/databases/$(database)/documents/classInvites/$(code)).data.active == true &&
+        get(/databases/$(database)/documents/classInvites/$(code)).data.schoolId == 'THCS_DONG_THANH';
+    }
+
+    function inviteDoc(code) {
+      return get(/databases/$(database)/documents/classInvites/$(code)).data;
+    }
+
+    function isInviteUid(uid) {
+      return uid is string &&
+        uid.size() >= 11 &&
+        uid.size() <= 40 &&
+        uid.matches('^invite_[A-Z0-9_\\-]{4,32}$');
+    }
+
+    function inviteCodeFromUid(uid) {
+      return uid.replace('^invite_', '');
+    }
+
+    function inviteRoleOf(code) {
+      return inviteDoc(code).get('role', 'teacher');
+    }
+
+    function isRoleAllowedModule(roleName, moduleId) {
+      return hasPermissionGroupDoc(roleName)
+        ? (
+            moduleId in groupDoc(roleName).allowedModules ||
+            (roleName == 'accountant' && moduleId == 'monthly_billing' && !('canCollectPayments' in groupDoc(roleName)))
+          )
+        : (
+            (roleName == 'teacher' && moduleId == 'teacher') ||
+            (roleName == 'accountant' && (moduleId == 'reports' || moduleId == 'monthly_billing')) ||
+            (roleName == 'medical' && moduleId == 'reports')
+          );
+    }
+
+    function isRoleAllowedFlag(roleName, flagName) {
+      return hasPermissionGroupDoc(roleName)
+        ? (
+            groupDoc(roleName).get(flagName, false) == true ||
+            (roleName == 'accountant' && flagName == 'canCollectPayments' && !('canCollectPayments' in groupDoc(roleName)))
+          )
+        : (
+            (roleName == 'teacher' && flagName == 'canMarkAttendance') ||
+            ((roleName == 'accountant' || roleName == 'medical') && flagName == 'canExportReports') ||
+            (roleName == 'accountant' && flagName == 'canCollectPayments')
+          );
+    }
+
+    function isAuthenticatedInvite() {
+      return isSignedIn() &&
+        request.auth.uid.matches('^invite_[A-Z0-9_\\-]{4,32}$') &&
+        request.auth.token.get('inviteCode', '') == inviteCodeFromUid(request.auth.uid) &&
+        hasValidActiveInvite(request.auth.token.get('inviteCode', '')) &&
+        request.auth.token.get('inviteRole', '') == inviteRoleOf(request.auth.token.get('inviteCode', ''));
+    }
+
+    function isAuthenticatedAccountant() {
+      return isAuthenticatedInvite() &&
+        request.auth.token.inviteRole == 'accountant' &&
+        isRoleAllowedModule('accountant', 'monthly_billing') &&
+        isRoleAllowedFlag('accountant', 'canCollectPayments');
+    }
+
+    function isAuthorizedInviteActor(uid, moduleId, flagName, targetClassId, roleField) {
+      let code = inviteCodeFromUid(uid);
+      let invRole = inviteRoleOf(code);
+      return (!isSignedIn() || (isAuthenticatedInvite() && request.auth.uid == uid)) &&
+        isInviteUid(uid) &&
+        hasValidActiveInvite(code) &&
+        invRole in ['teacher', 'accountant', 'medical'] &&
+        (roleField == '' || roleField == invRole) &&
+        isRoleAllowedModule(invRole, moduleId) &&
+        (flagName == '' || isRoleAllowedFlag(invRole, flagName)) &&
+        (invRole != 'teacher' || targetClassId == '' || inviteDoc(code).classId == targetClassId);
+    }
+
+    function hasAccountTombstone(accessId) {
+      return exists(/databases/$(database)/documents/deletionTombstones/$('accountAccess_' + accessId));
+    }
+
+    function isReportLocked(env, date) {
+      let reportId = env + '_' + date;
+      return exists(/databases/$(database)/documents/dailyReports/$(reportId)) &&
+             get(/databases/$(database)/documents/dailyReports/$(reportId)).data.isLocked == true;
+    }
+
+    function isSettlementMonthLocked(env, monthStr) {
+      let settleId = env + '_' + monthStr;
+      return exists(/databases/$(database)/documents/monthlySettlements/$(settleId)) &&
+             get(/databases/$(database)/documents/monthlySettlements/$(settleId)).data.isLocked == true;
+    }
+
+    function isMonthLocked(env, date) {
+      return isSettlementMonthLocked(env, date[0:7]);
+    }
+
+    // Entity Validation Blueprints (Pillar 2)
+    function isValidUserProfile(data) {
+      return data.keys().hasAll(['uid', 'email', 'displayName', 'role', 'status', 'assignedClassId', 'linkedStudentId', 'joinedInviteCode', 'lastLoginAtIso', 'schoolId', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['uid', 'email', 'displayName', 'role', 'status', 'assignedClassId', 'linkedStudentId', 'joinedInviteCode', 'lastLoginAtIso', 'schoolId', 'createdAt', 'updatedAt']) &&
+        data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 &&
+        data.email is string && data.email.size() >= 3 && data.email.size() <= 256 &&
+        data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 120 &&
+        data.role in ['admin', 'teacher', 'accountant', 'medical'] &&
+        data.status in ['active', 'suspended', 'locked', 'revoked', 'pending'] &&
+        data.assignedClassId is string && data.assignedClassId.size() <= 64 &&
+        data.linkedStudentId is string && data.linkedStudentId.size() <= 64 &&
+        data.joinedInviteCode is string && data.joinedInviteCode.size() <= 32 &&
+        data.lastLoginAtIso is string && data.lastLoginAtIso.size() <= 48 &&
+        data.schoolId == 'THCS_DONG_THANH' &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidAccountAccess(data) {
+      return data.keys().hasAll(['id', 'email', 'displayName', 'role', 'status', 'assignedClassId', 'joinedInviteCode', 'uid', 'lastLoginAtIso', 'schoolId', 'visibility', 'updatedByUid', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['id', 'email', 'displayName', 'role', 'status', 'assignedClassId', 'joinedInviteCode', 'uid', 'lastLoginAtIso', 'schoolId', 'visibility', 'updatedByUid', 'createdAt', 'updatedAt']) &&
+        isValidId(data.id) &&
+        data.email is string && data.email.size() >= 3 && data.email.size() <= 256 &&
+        data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 120 &&
+        data.role in ['admin', 'teacher', 'accountant', 'medical'] &&
+        data.status in ['active', 'suspended', 'locked', 'revoked', 'pending'] &&
+        data.assignedClassId is string && data.assignedClassId.size() <= 64 &&
+        data.joinedInviteCode is string && data.joinedInviteCode.size() <= 32 &&
+        data.uid is string && data.uid.size() <= 128 &&
+        data.lastLoginAtIso is string && data.lastLoginAtIso.size() <= 48 &&
+        data.schoolId == 'THCS_DONG_THANH' &&
+        data.visibility == 'school' &&
+        data.updatedByUid is string && data.updatedByUid.size() <= 128 &&
+        data.updatedByUid == request.auth.uid &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidSchoolClass(data) {
+      return data.keys().hasAll(['id', 'name', 'grade', 'order', 'teacherName', 'teacherEmail', 'studentCount', 'active', 'env', 'schoolId', 'visibility', 'updatedByUid', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['id', 'name', 'grade', 'order', 'teacherName', 'teacherEmail', 'studentCount', 'active', 'env', 'schoolId', 'visibility', 'updatedByUid', 'createdAt', 'updatedAt']) &&
+        isValidId(data.id) &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 32 &&
+        data.grade in [6, 7, 8, 9] &&
+        data.order is number && data.order >= 1 && data.order <= 100 &&
+        data.teacherName is string && data.teacherName.size() <= 120 &&
+        data.teacherEmail is string && data.teacherEmail.size() <= 256 &&
+        data.studentCount is number && data.studentCount >= 0 && data.studentCount <= 100 &&
+        data.active is bool &&
+        data.env in ['production', 'sandbox'] &&
+        data.schoolId == 'THCS_DONG_THANH' &&
+        data.visibility == 'school' &&
+        data.updatedByUid is string && data.updatedByUid.size() <= 128 &&
+        data.updatedByUid == request.auth.uid &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidStudent(data) {
+      return data.keys().hasAll(['id', 'studentCode', 'fullName', 'classId', 'className', 'grade', 'gender', 'qrCode', 'parentName', 'parentUid', 'active', 'env', 'schoolId', 'visibility', 'updatedByUid', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['id', 'studentCode', 'fullName', 'classId', 'className', 'grade', 'gender', 'qrCode', 'parentName', 'parentUid', 'active', 'env', 'schoolId', 'visibility', 'updatedByUid', 'createdAt', 'updatedAt']) &&
+        isValidId(data.id) &&
+        data.studentCode is string && data.studentCode.size() >= 1 && data.studentCode.size() <= 32 &&
+        data.fullName is string && data.fullName.size() >= 1 && data.fullName.size() <= 120 &&
+        isValidId(data.classId) &&
+        data.className is string && data.className.size() >= 1 && data.className.size() <= 32 &&
+        data.grade in [6, 7, 8, 9] &&
+        data.gender in ['Nam', 'Nữ', 'Khác', ''] &&
+        data.qrCode is string && data.qrCode.size() >= 1 && data.qrCode.size() <= 128 &&
+        data.parentName is string && data.parentName.size() <= 120 &&
+        data.parentUid is string && data.parentUid.size() <= 128 &&
+        data.active is bool &&
+        data.env in ['production', 'sandbox'] &&
+        data.schoolId == 'THCS_DONG_THANH' &&
+        data.visibility == 'school' &&
+        data.updatedByUid is string && data.updatedByUid.size() <= 128 &&
+        ((isVerified() && data.updatedByUid == request.auth.uid) || isInviteUid(data.updatedByUid)) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidMealRegistration(data) {
+      return data.keys().hasAll(['id', 'date', 'studentId', 'studentCode', 'studentName', 'classId', 'className', 'grade', 'status', 'updatedByUid', 'updatedByName', 'updatedByRole', 'updatedAtIso', 'isPostLockAdjustment', 'adjustmentReason', 'env', 'schoolId', 'visibility', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['id', 'date', 'studentId', 'studentCode', 'studentName', 'classId', 'className', 'grade', 'status', 'updatedByUid', 'updatedByName', 'updatedByRole', 'updatedAtIso', 'isPostLockAdjustment', 'adjustmentReason', 'env', 'schoolId', 'visibility', 'createdAt', 'updatedAt']) &&
+        isValidId(data.id) &&
+        data.date is string && data.date.size() == 10 && data.date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') &&
+        isValidId(data.studentId) &&
+        data.studentCode is string && data.studentCode.size() >= 1 && data.studentCode.size() <= 32 &&
+        data.studentName is string && data.studentName.size() >= 1 && data.studentName.size() <= 120 &&
+        isValidId(data.classId) &&
+        data.className is string && data.className.size() >= 1 && data.className.size() <= 32 &&
+        data.grade in [6, 7, 8, 9] &&
+        data.status in ['eating', 'not_eating', 'unregistered'] &&
+        data.updatedByUid is string && data.updatedByUid.size() <= 128 &&
+        ((isVerified() && data.updatedByUid == request.auth.uid) || isInviteUid(data.updatedByUid)) &&
+        data.updatedByName is string && data.updatedByName.size() >= 1 && data.updatedByName.size() <= 120 &&
+        data.updatedByRole in ['teacher', 'admin', 'medical', 'accountant', 'system'] &&
+        data.updatedAtIso is string && data.updatedAtIso.size() <= 48 &&
+        data.isPostLockAdjustment is bool &&
+        data.adjustmentReason is string && data.adjustmentReason.size() <= 500 &&
+        data.env in ['production', 'sandbox'] &&
+        data.schoolId == 'THCS_DONG_THANH' &&
+        data.visibility == 'school' &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidRegistrationLog(data) {
+      return data.keys().hasAll(['id', 'registrationId', 'date', 'studentId', 'studentName', 'classId', 'className', 'grade', 'previousStatus', 'newStatus', 'actorUid', 'actorName', 'actorRole', 'timestampIso', 'isAfterCutoff', 'reason', 'env', 'schoolId', 'visibility', 'createdAt']) &&
+        data.keys().hasOnly(['id', 'registrationId', 'date', 'studentId', 'studentName', 'classId', 'className', 'grade', 'previousStatus', 'newStatus', 'actorUid', 'actorName', 'actorRole', 'timestampIso', 'isAfterCutoff', 'reason', 'env', 'schoolId', 'visibility', 'createdAt']) &&
+        isValidId(data.id) &&
+        isValidId(data.registrationId) &&
+        data.date is string && data.date.size() == 10 &&
+        isValidId(data.studentId) &&
+        data.studentName is string && data.studentName.size() >= 1 && data.studentName.size() <= 120 &&
+        isValidId(data.classId) &&
+        data.className is string && data.className.size() >= 1 && data.className.size() <= 32 &&
+        data.grade in [6, 7, 8, 9] &&
+        data.previousStatus in ['eating', 'not_eating', 'unregistered'] &&
+        data.newStatus in ['eating', 'not_eating', 'unregistered'] &&
+        data.actorUid is string && data.actorUid.size() <= 128 &&
+        ((isVerified() && data.actorUid == request.auth.uid) || isInviteUid(data.actorUid)) &&
+        data.actorName is string && data.actorName.size() >= 1 && data.actorName.size() <= 120 &&
+        data.actorRole in ['teacher', 'admin', 'medical', 'accountant', 'system'] &&
+        data.timestampIso is string && data.timestampIso.size() <= 48 &&
+        data.isAfterCutoff is bool &&
+        data.reason is string && data.reason.size() <= 500 &&
+        data.env in ['production', 'sandbox'] &&
+        data.schoolId == 'THCS_DONG_THANH' &&
+        data.visibility == 'school' &&
+        data.createdAt is timestamp;
+    }
+
+    function isValidDailyReport(data) {
+      return data.keys().hasAll(['id', 'date', 'isLocked', 'lockedAtIso', 'lockedByUid', 'lockedByName', 'lockType', 'initialTotalEating', 'adjustedTotalEating', 'totalNotEating', 'totalUnregistered', 'totalStudents', 'grade6Eating', 'grade7Eating', 'grade8Eating', 'grade9Eating', 'adjustmentCount', 'kitchenConfirmed', 'kitchenConfirmedAtIso', 'kitchenConfirmedByName', 'kitchenConfirmedByUid', 'env', 'schoolId', 'visibility', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['id', 'date', 'isLocked', 'lockedAtIso', 'lockedByUid', 'lockedByName', 'lockType', 'initialTotalEating', 'adjustedTotalEating', 'totalNotEating', 'totalUnregistered', 'totalStudents', 'grade6Eating', 'grade7Eating', 'grade8Eating', 'grade9Eating', 'adjustmentCount', 'kitchenConfirmed', 'kitchenConfirmedAtIso', 'kitchenConfirmedByName', 'kitchenConfirmedByUid', 'env', 'schoolId', 'visibility', 'createdAt', 'updatedAt']) &&
+        isValidId(data.id) &&
+        data.date is string && data.date.size() == 10 &&
+        data.isLocked is bool &&
+        data.lockedAtIso is string && data.lockedAtIso.size() <= 48 &&
+        data.lockedByUid is string && data.lockedByUid.size() <= 128 &&
+        data.lockedByName is string && data.lockedByName.size() <= 120 &&
+        data.lockType in ['auto_0800', 'manual_admin'] &&
+        data.initialTotalEating is number && data.initialTotalEating >= 0 &&
+        data.adjustedTotalEating is number && data.adjustedTotalEating >= 0 &&
+        data.totalNotEating is number && data.totalNotEating >= 0 &&
+        data.totalUnregistered is number && data.totalUnregistered >= 0 &&
+        data.totalStudents is number && data.totalStudents >= 0 &&
+        data.grade6Eating is number && data.grade6Eating >= 0 &&
+        data.grade7Eating is number && data.grade7Eating >= 0 &&
+        data.grade8Eating is number && data.grade8Eating >= 0 &&
+        data.grade9Eating is number && data.grade9Eating >= 0 &&
+        data.adjustmentCount is number && data.adjustmentCount >= 0 &&
+        data.kitchenConfirmed is bool &&
+        data.kitchenConfirmedAtIso is string && data.kitchenConfirmedAtIso.size() <= 48 &&
+        data.kitchenConfirmedByName is string && data.kitchenConfirmedByName.size() <= 120 &&
+        data.kitchenConfirmedByUid is string && data.kitchenConfirmedByUid.size() <= 128 &&
+        data.env in ['production', 'sandbox'] &&
+        data.schoolId == 'THCS_DONG_THANH' &&
+        data.visibility == 'school' &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidArchivedYearSnapshot(data) {
+      return data.keys().hasAll(['id', 'academicYear', 'archivedAtIso', 'archivedByUid', 'archivedByName', 'scope', 'studentCount', 'students', 'env', 'schoolId', 'visibility', 'createdAt']) &&
+        data.keys().hasOnly(['id', 'academicYear', 'archivedAtIso', 'archivedByUid', 'archivedByName', 'scope', 'studentCount', 'students', 'env', 'schoolId', 'visibility', 'createdAt']) &&
+        isValidId(data.id) &&
+        data.academicYear is string && data.academicYear.size() >= 2 && data.academicYear.size() <= 32 &&
+        data.archivedAtIso is string && data.archivedAtIso.size() <= 48 &&
+        data.archivedByUid is string && data.archivedByUid == request.auth.uid &&
+        data.archivedByName is string && data.archivedByName.size() <= 120 &&
+        data.scope is string && data.scope.size() <= 64 &&
+        data.studentCount is number && data.studentCount >= 0 &&
+        data.students is list && data.students.size() <= 5000 &&
+        (data.students.size() == 0 || data.students[0] is map) &&
+        data.env in ['production', 'sandbox'] &&
+        data.schoolId == 'THCS_DONG_THANH' &&
+        data.visibility == 'school' &&
+        data.createdAt is timestamp;
+    }
+
+    function isValidSchoolSetting(data) {
+      return data.keys().hasAll(['id', 'schoolName', 'cutoffTime', 'academicYear', 'semester', 'autoLockEnabled', 'studentListVersion', 'lastBulkResetAtIso', 'schoolId', 'visibility', 'updatedByUid', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['id', 'schoolName', 'cutoffTime', 'academicYear', 'semester', 'autoLockEnabled', 'studentListVersion', 'lastBulkResetAtIso', 'schoolId', 'visibility', 'updatedByUid', 'createdAt', 'updatedAt']) &&
+        isValidId(data.id) &&
+        data.schoolName is string && data.schoolName.size() >= 1 && data.schoolName.size() <= 200 &&
+        data.cutoffTime is string && data.cutoffTime.size() == 5 && data.cutoffTime.matches('^[0-2][0-9]:[0-5][0-9]$') &&
+        data.academicYear is string && data.academicYear.size() >= 4 && data.academicYear.size() <= 32 &&
+        data.semester in ['HK1', 'HK2'] &&
+        data.autoLockEnabled is bool &&
+        data.studentListVersion is number && data.studentListVersion >= 0 &&
+        data.lastBulkResetAtIso is string && data.lastBulkResetAtIso.size() <= 48 &&
+        data.schoolId == 'THCS_DONG_THANH' &&
+        data.visibility == 'school' &&
+        data.updatedByUid is string && data.updatedByUid.size() <= 128 &&
+        data.updatedByUid == request.auth.uid &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidDeletionTombstone(data) {
+      return data.keys().hasAll(['id', 'collectionName', 'documentId', 'deletedAtMs', 'deletedAtIso', 'deletedByUid', 'reason', 'env', 'schoolId', 'visibility', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['id', 'collectionName', 'documentId', 'deletedAtMs', 'deletedAtIso', 'deletedByUid', 'reason', 'env', 'schoolId', 'visibility', 'createdAt', 'updatedAt']) &&
+        isValidId(data.id) &&
+        data.collectionName in ['students', 'classes', 'registrations', 'accountAccess', 'dailyReports', 'archivedYears', 'classInvites', 'mealPricingRules', 'mealPayments', 'monthlySettlements'] &&
+        isValidId(data.documentId) &&
+        data.deletedAtMs is number && data.deletedAtMs >= 0 &&
+        data.deletedAtIso is string && data.deletedAtIso.size() <= 48 &&
+        data.deletedByUid is string && data.deletedByUid.size() <= 128 &&
+        ((isVerified() && data.deletedByUid == request.auth.uid) || isInviteUid(data.deletedByUid)) &&
+        data.reason is string && data.reason.size() <= 500 &&
+        data.env in ['production', 'sandbox'] &&
+        data.schoolId == 'THCS_DONG_THANH' &&
+        data.visibility == 'school' &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidPermissionGroup(data) {
+      return data.keys().hasAll(['id', 'label', 'description', 'allowedModules', 'canMarkAttendance', 'canExportReports', 'canManageStudents', 'canShareClassCode', 'updatedAtIso', 'updatedByUid', 'schoolId', 'visibility', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['id', 'label', 'description', 'allowedModules', 'canMarkAttendance', 'canExportReports', 'canManageStudents', 'canShareClassCode', 'canManageMealPricing', 'canCollectPayments', 'updatedAtIso', 'updatedByUid', 'schoolId', 'visibility', 'createdAt', 'updatedAt']) &&
+        data.id in ['admin', 'teacher', 'accountant', 'medical'] &&
+        data.label is string && data.label.size() >= 1 && data.label.size() <= 120 &&
+        data.description is string && data.description.size() <= 300 &&
+        data.allowedModules is list && data.allowedModules.size() <= 16 &&
+        data.canMarkAttendance is bool &&
+        data.canExportReports is bool &&
+        data.canManageStudents is bool &&
+        data.canShareClassCode is bool &&
+        (!('canManageMealPricing' in data) || data.canManageMealPricing is bool) &&
+        (!('canCollectPayments' in data) || data.canCollectPayments is bool) &&
+        data.updatedAtIso is string && data.updatedAtIso.size() <= 48 &&
+        data.updatedByUid is string && data.updatedByUid.size() <= 128 &&
+        data.updatedByUid == request.auth.uid &&
+        data.schoolId == 'THCS_DONG_THANH' &&
+        data.visibility == 'school' &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidClassInvite(data) {
+      return data.keys().hasAll(['id', 'code', 'classId', 'className', 'grade', 'active', 'usageCount', 'lastUsedByEmail', 'lastUsedAtIso', 'createdByUid', 'createdByName', 'updatedAtIso', 'schoolId', 'visibility', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['id', 'code', 'role', 'memberLabel', 'classId', 'className', 'grade', 'active', 'usageCount', 'lastUsedByEmail', 'lastUsedAtIso', 'createdByUid', 'createdByName', 'updatedAtIso', 'schoolId', 'visibility', 'createdAt', 'updatedAt']) &&
+        isValidId(data.id) &&
+        data.code is string && data.code.size() >= 4 && data.code.size() <= 32 &&
+        data.id == data.code &&
+        (!('role' in data) || data.role in ['teacher', 'accountant', 'medical']) &&
+        (!('memberLabel' in data) || (data.memberLabel is string && data.memberLabel.size() <= 120)) &&
+        isValidId(data.classId) &&
+        data.className is string && data.className.size() >= 1 && data.className.size() <= 32 &&
+        data.grade in [6, 7, 8, 9] &&
+        data.active is bool &&
+        data.usageCount is number && data.usageCount >= 0 &&
+        data.lastUsedByEmail is string && data.lastUsedByEmail.size() <= 256 &&
+        data.lastUsedAtIso is string && data.lastUsedAtIso.size() <= 48 &&
+        data.createdByUid is string && data.createdByUid.size() >= 1 && data.createdByUid.size() <= 128 &&
+        data.createdByName is string && data.createdByName.size() <= 120 &&
+        data.updatedAtIso is string && data.updatedAtIso.size() <= 48 &&
+        data.schoolId == 'THCS_DONG_THANH' &&
+        data.visibility == 'school' &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidMealPricingRule(data) {
+      return data.keys().hasAll(['id', 'effectiveFrom', 'pricePerMeal', 'targetScope', 'targetGrade', 'targetClassId', 'groupTag', 'studentIds', 'note', 'active', 'createdAtIso', 'updatedAtIso', 'updatedByUid', 'updatedByName', 'env', 'schoolId', 'visibility', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['id', 'effectiveFrom', 'pricePerMeal', 'targetScope', 'targetGrade', 'targetClassId', 'groupTag', 'studentIds', 'note', 'active', 'createdAtIso', 'updatedAtIso', 'updatedByUid', 'updatedByName', 'env', 'schoolId', 'visibility', 'createdAt', 'updatedAt']) &&
+        isValidId(data.id) &&
+        data.effectiveFrom is string && data.effectiveFrom.size() == 10 && data.effectiveFrom.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') &&
+        data.pricePerMeal is number && data.pricePerMeal >= 0 && data.pricePerMeal <= 5000000 &&
+        data.targetScope in ['school', 'grade', 'class', 'student_group'] &&
+        data.targetGrade in [0, 6, 7, 8, 9] &&
+        data.targetClassId is string && data.targetClassId.size() <= 64 &&
+        data.groupTag is string && data.groupTag.size() <= 64 &&
+        data.studentIds is list && data.studentIds.size() <= 1500 &&
+        data.note is string && data.note.size() <= 300 &&
+        data.active is bool &&
+        data.createdAtIso is string && data.createdAtIso.size() <= 48 &&
+        data.updatedAtIso is string && data.updatedAtIso.size() <= 48 &&
+        data.updatedByUid is string && data.updatedByUid.size() >= 1 && data.updatedByUid.size() <= 128 &&
+        data.updatedByUid == request.auth.uid &&
+        data.updatedByName is string && data.updatedByName.size() <= 120 &&
+        data.env in ['production', 'sandbox'] &&
+        data.schoolId == 'THCS_DONG_THANH' &&
+        data.visibility == 'school' &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidMealPricingLog(data) {
+      return data.keys().hasAll(['id', 'ruleId', 'action', 'effectiveFrom', 'previousPrice', 'newPrice', 'targetScope', 'targetLabel', 'note', 'actorUid', 'actorName', 'timestampIso', 'env', 'schoolId', 'visibility', 'createdAt']) &&
+        data.keys().hasOnly(['id', 'ruleId', 'action', 'effectiveFrom', 'previousPrice', 'newPrice', 'targetScope', 'targetLabel', 'note', 'actorUid', 'actorName', 'timestampIso', 'env', 'schoolId', 'visibility', 'createdAt']) &&
+        isValidId(data.id) &&
+        isValidId(data.ruleId) &&
+        data.action in ['create', 'update', 'delete'] &&
+        data.effectiveFrom is string && data.effectiveFrom.size() == 10 &&
+        data.previousPrice is number && data.previousPrice >= 0 &&
+        data.newPrice is number && data.newPrice >= 0 &&
+        data.targetScope in ['school', 'grade', 'class', 'student_group'] &&
+        data.targetLabel is string && data.targetLabel.size() <= 120 &&
+        data.note is string && data.note.size() <= 300 &&
+        data.actorUid is string && data.actorUid.size() >= 1 && data.actorUid.size() <= 128 &&
+        data.actorUid == request.auth.uid &&
+        data.actorName is string && data.actorName.size() <= 120 &&
+        data.timestampIso is string && data.timestampIso.size() <= 48 &&
+        data.env in ['production', 'sandbox'] &&
+        data.schoolId == 'THCS_DONG_THANH' &&
+        data.visibility == 'school' &&
+        data.createdAt is timestamp;
+    }
+
+    function isValidMealBillingConfig(data) {
+      return data.keys().hasAll(['id', 'holidays', 'symbolXLabel', 'symbolVLabel', 'symbolRLabel', 'symbolEmptyLabel', 'updatedAtIso', 'updatedByUid', 'updatedByName', 'env', 'schoolId', 'visibility', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['id', 'holidays', 'symbolXLabel', 'symbolVLabel', 'symbolRLabel', 'symbolEmptyLabel', 'updatedAtIso', 'updatedByUid', 'updatedByName', 'env', 'schoolId', 'visibility', 'createdAt', 'updatedAt']) &&
+        isValidId(data.id) &&
+        data.holidays is list && data.holidays.size() <= 200 &&
+        data.symbolXLabel is string && data.symbolXLabel.size() <= 120 &&
+        data.symbolVLabel is string && data.symbolVLabel.size() <= 120 &&
+        data.symbolRLabel is string && data.symbolRLabel.size() <= 120 &&
+        data.symbolEmptyLabel is string && data.symbolEmptyLabel.size() <= 120 &&
+        data.updatedAtIso is string && data.updatedAtIso.size() <= 48 &&
+        data.updatedByUid is string && data.updatedByUid.size() >= 1 && data.updatedByUid.size() <= 128 &&
+        data.updatedByUid == request.auth.uid &&
+        data.updatedByName is string && data.updatedByName.size() <= 120 &&
+        data.env in ['production', 'sandbox'] &&
+        data.schoolId == 'THCS_DONG_THANH' &&
+        data.visibility == 'school' &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidMealPayment(data) {
+      return data.keys().hasAll(['id', 'month', 'studentId', 'studentCode', 'studentName', 'classId', 'className', 'grade', 'amountPaid', 'paymentDate', 'paymentMethod', 'receiptNumber', 'idempotencyKey', 'note', 'collectorUid', 'collectorName', 'collectorRole', 'version', 'isVoided', 'updatedAtIso', 'env', 'schoolId', 'visibility', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['id', 'month', 'studentId', 'studentCode', 'studentName', 'classId', 'className', 'grade', 'amountPaid', 'paymentDate', 'paymentMethod', 'receiptNumber', 'idempotencyKey', 'note', 'collectorUid', 'collectorName', 'collectorRole', 'version', 'isVoided', 'updatedAtIso', 'env', 'schoolId', 'visibility', 'createdAt', 'updatedAt']) &&
+        isValidId(data.id) &&
+        data.month is string && data.month.size() == 7 && data.month.matches('^[0-9]{4}-[0-9]{2}$') &&
+        isValidId(data.studentId) &&
+        data.studentCode is string && data.studentCode.size() >= 1 && data.studentCode.size() <= 32 &&
+        data.studentName is string && data.studentName.size() >= 1 && data.studentName.size() <= 120 &&
+        isValidId(data.classId) &&
+        data.className is string && data.className.size() >= 1 && data.className.size() <= 32 &&
+        data.grade in [6, 7, 8, 9] &&
+        data.amountPaid is number && data.amountPaid > 0 && data.amountPaid <= 100000000 &&
+        data.paymentDate is string && data.paymentDate.size() == 10 && data.paymentDate.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') &&
+        data.paymentMethod in ['cash', 'transfer'] &&
+        data.receiptNumber is string && data.receiptNumber.size() >= 3 && data.receiptNumber.size() <= 64 &&
+        data.idempotencyKey is string && data.idempotencyKey.size() >= 3 && data.idempotencyKey.size() <= 96 &&
+        data.note is string && data.note.size() <= 300 &&
+        data.collectorUid is string && data.collectorUid.size() >= 1 && data.collectorUid.size() <= 128 &&
+        ((isVerified() && data.collectorUid == request.auth.uid) || isInviteUid(data.collectorUid)) &&
+        data.collectorName is string && data.collectorName.size() >= 1 && data.collectorName.size() <= 120 &&
+        data.collectorRole in ['admin', 'accountant', 'teacher', 'medical', 'system'] &&
+        data.version is number && data.version >= 1 &&
+        data.isVoided is bool &&
+        data.updatedAtIso is string && data.updatedAtIso.size() <= 48 &&
+        data.env in ['production', 'sandbox'] &&
+        data.schoolId == 'THCS_DONG_THANH' &&
+        data.visibility == 'school' &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidMealPaymentLog(data) {
+      return data.keys().hasAll(['id', 'paymentId', 'month', 'studentId', 'studentName', 'className', 'action', 'previousAmount', 'newAmount', 'previousMethod', 'newMethod', 'reason', 'actorUid', 'actorName', 'actorRole', 'timestampIso', 'env', 'schoolId', 'visibility', 'createdAt']) &&
+        data.keys().hasOnly(['id', 'paymentId', 'month', 'studentId', 'studentName', 'className', 'action', 'previousAmount', 'newAmount', 'previousMethod', 'newMethod', 'reason', 'actorUid', 'actorName', 'actorRole', 'timestampIso', 'env', 'schoolId', 'visibility', 'createdAt']) &&
+        isValidId(data.id) &&
+        isValidId(data.paymentId) &&
+        data.month is string && data.month.size() == 7 &&
+        isValidId(data.studentId) &&
+        data.studentName is string && data.studentName.size() >= 1 && data.studentName.size() <= 120 &&
+        data.className is string && data.className.size() >= 1 && data.className.size() <= 32 &&
+        data.action in ['create', 'update', 'void'] &&
+        data.previousAmount is number && data.previousAmount >= 0 &&
+        data.newAmount is number && data.newAmount >= 0 &&
+        data.previousMethod in ['cash', 'transfer', ''] &&
+        data.newMethod in ['cash', 'transfer', ''] &&
+        data.reason is string && data.reason.size() <= 300 &&
+        data.actorUid is string && data.actorUid.size() >= 1 && data.actorUid.size() <= 128 &&
+        ((isVerified() && data.actorUid == request.auth.uid) || isInviteUid(data.actorUid)) &&
+        data.actorName is string && data.actorName.size() >= 1 && data.actorName.size() <= 120 &&
+        data.actorRole in ['admin', 'accountant', 'teacher', 'medical', 'system'] &&
+        data.timestampIso is string && data.timestampIso.size() <= 48 &&
+        data.env in ['production', 'sandbox'] &&
+        data.schoolId == 'THCS_DONG_THANH' &&
+        data.visibility == 'school' &&
+        data.createdAt is timestamp;
+    }
+
+    function isValidMonthlySettlement(data) {
+      return data.keys().hasAll(['id', 'month', 'isLocked', 'lockedAtIso', 'lockedByUid', 'lockedByName', 'unlockedAtIso', 'unlockedByName', 'note', 'totalStudentsSnapshot', 'totalMealsSnapshot', 'totalAbsencesSnapshot', 'totalAmountDueSnapshot', 'totalAmountPaidSnapshot', 'env', 'schoolId', 'visibility', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['id', 'month', 'isLocked', 'lockedAtIso', 'lockedByUid', 'lockedByName', 'unlockedAtIso', 'unlockedByName', 'note', 'totalStudentsSnapshot', 'totalMealsSnapshot', 'totalAbsencesSnapshot', 'totalAmountDueSnapshot', 'totalAmountPaidSnapshot', 'env', 'schoolId', 'visibility', 'createdAt', 'updatedAt']) &&
+        isValidId(data.id) &&
+        data.month is string && data.month.size() == 7 && data.month.matches('^[0-9]{4}-[0-9]{2}$') &&
+        data.isLocked is bool &&
+        data.lockedAtIso is string && data.lockedAtIso.size() <= 48 &&
+        data.lockedByUid is string && data.lockedByUid.size() <= 128 &&
+        data.lockedByName is string && data.lockedByName.size() <= 120 &&
+        data.unlockedAtIso is string && data.unlockedAtIso.size() <= 48 &&
+        data.unlockedByName is string && data.unlockedByName.size() <= 120 &&
+        data.note is string && data.note.size() <= 300 &&
+        data.totalStudentsSnapshot is number && data.totalStudentsSnapshot >= 0 &&
+        data.totalMealsSnapshot is number && data.totalMealsSnapshot >= 0 &&
+        data.totalAbsencesSnapshot is number && data.totalAbsencesSnapshot >= 0 &&
+        data.totalAmountDueSnapshot is number && data.totalAmountDueSnapshot >= 0 &&
+        data.totalAmountPaidSnapshot is number && data.totalAmountPaidSnapshot >= 0 &&
+        data.env in ['production', 'sandbox'] &&
+        data.schoolId == 'THCS_DONG_THANH' &&
+        data.visibility == 'school' &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    // Connection test endpoint
+    match /test/{docId} {
+      allow get: if isSignedIn() && isValidId(docId);
+      allow list, create, update, delete: if false;
+    }
+
+    // 1. Users Collection (Pillar 6: PII Isolation & Role Integrity)
+    match /users/{userId} {
+      allow get: if isVerified() && isValidId(userId) && (request.auth.uid == userId || isAdmin());
+      allow list: if isVerified() && (existing().uid == request.auth.uid || isBootstrappedAdmin() || isAdmin());
+      allow create: if isVerified() && isValidId(userId) &&
+        isValidUserProfile(incoming()) &&
+        incoming().uid == userId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        (
+          isAdmin() ||
+          (
+            request.auth.uid == userId &&
+            (
+              isBootstrappedAdmin() ||
+              (
+                hasAccessDoc() &&
+                incoming().role == accessDoc().role &&
+                incoming().status == accessDoc().status &&
+                incoming().assignedClassId == accessDoc().assignedClassId &&
+                incoming().joinedInviteCode == accessDoc().joinedInviteCode
+              ) ||
+              (
+                !hasAccessDoc() &&
+                incoming().role == 'teacher' &&
+                incoming().status == 'pending' &&
+                incoming().assignedClassId == '' &&
+                incoming().joinedInviteCode == ''
+              ) ||
+              (
+                (!hasAccessDoc() || accessDoc().status == 'pending' || (accessDoc().role == 'teacher' && accessDoc().status == 'active' && accessDoc().assignedClassId == '')) &&
+                !hasAccountTombstone(authEmailKey()) &&
+                hasValidActiveInvite(incoming().joinedInviteCode) &&
+                incoming().role == inviteRoleOf(incoming().joinedInviteCode) &&
+                incoming().status == 'active' &&
+                incoming().assignedClassId == (inviteRoleOf(incoming().joinedInviteCode) == 'teacher' ? inviteDoc(incoming().joinedInviteCode).classId : '')
+              )
+            )
+          )
+        );
+      allow update: if isVerified() && isValidId(userId) &&
+        isValidUserProfile(incoming()) &&
+        incoming().uid == existing().uid &&
+        incoming().email == existing().email &&
+        incoming().schoolId == existing().schoolId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        (
+          (
+            request.auth.uid == userId &&
+            incoming().role == existing().role &&
+            incoming().status == existing().status &&
+            incoming().assignedClassId == existing().assignedClassId &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'linkedStudentId', 'joinedInviteCode', 'lastLoginAtIso', 'updatedAt'])
+          ) ||
+          (
+            request.auth.uid == userId &&
+            !hasAccountTombstone(authEmailKey()) &&
+            (existing().status == 'pending' || (existing().role == 'teacher' && existing().status == 'active' && existing().assignedClassId == '')) &&
+            (!hasAccessDoc() || accessDoc().status == 'pending' || (accessDoc().role == 'teacher' && accessDoc().status == 'active' && accessDoc().assignedClassId == '')) &&
+            hasValidActiveInvite(incoming().joinedInviteCode) &&
+            incoming().role == inviteRoleOf(incoming().joinedInviteCode) &&
+            incoming().status == 'active' &&
+            incoming().assignedClassId == (inviteRoleOf(incoming().joinedInviteCode) == 'teacher' ? inviteDoc(incoming().joinedInviteCode).classId : '')
+          ) ||
+          (
+            isAdmin() &&
+            !(existing().email == 'minhtrangdongthanh@gmail.com' && (incoming().role != 'admin' || incoming().status != 'active'))
+          )
+        );
+      allow delete: if isVerified() && isValidId(userId) && isAdmin() && existing().email != 'minhtrangdongthanh@gmail.com';
+    }
+
+    // 2. Account Access & RBAC Registry (Admin-managed by Email + Zero-Trust Invite Redemption)
+    match /accountAccess/{accessId} {
+      allow get: if isVerified() && isValidId(accessId) && (resource == null || accessId == authEmailKey() || existing().email == request.auth.token.email || isAdmin());
+      allow list: if isVerified() && (existing().email == request.auth.token.email || isBootstrappedAdmin() || isAdmin());
+      allow create: if isVerified() && isValidId(accessId) &&
+        isValidAccountAccess(incoming()) &&
+        incoming().id == accessId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        (
+          isAdmin() ||
+          (
+            accessId == authEmailKey() &&
+            incoming().email == request.auth.token.email.lower() &&
+            incoming().uid == request.auth.uid &&
+            !hasAccountTombstone(accessId) &&
+            (
+              (
+                incoming().role == 'teacher' &&
+                incoming().status == 'pending' &&
+                incoming().assignedClassId == '' &&
+                incoming().joinedInviteCode == ''
+              ) ||
+              (
+                hasValidActiveInvite(incoming().joinedInviteCode) &&
+                incoming().role == inviteRoleOf(incoming().joinedInviteCode) &&
+                incoming().status == 'active' &&
+                incoming().assignedClassId == (inviteRoleOf(incoming().joinedInviteCode) == 'teacher' ? inviteDoc(incoming().joinedInviteCode).classId : '')
+              )
+            )
+          )
+        );
+      allow update: if isVerified() && isValidId(accessId) &&
+        isValidAccountAccess(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().email == existing().email &&
+        incoming().schoolId == existing().schoolId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        (
+          (
+            isAdmin() &&
+            !(existing().email == 'minhtrangdongthanh@gmail.com' && (incoming().role != 'admin' || incoming().status != 'active'))
+          ) ||
+          (
+            accessId == authEmailKey() &&
+            incoming().uid == request.auth.uid &&
+            !hasAccountTombstone(accessId) &&
+            (
+              (
+                incoming().role == existing().role &&
+                incoming().status == existing().status &&
+                incoming().assignedClassId == existing().assignedClassId &&
+                incoming().diff(existing()).affectedKeys().hasOnly(['uid', 'lastLoginAtIso', 'joinedInviteCode', 'updatedByUid', 'updatedAt'])
+              ) ||
+              (
+                (existing().status == 'pending' || (existing().role == 'teacher' && existing().status == 'active' && existing().assignedClassId == '')) &&
+                hasValidActiveInvite(incoming().joinedInviteCode) &&
+                incoming().role == inviteRoleOf(incoming().joinedInviteCode) &&
+                incoming().status == 'active' &&
+                incoming().assignedClassId == (inviteRoleOf(incoming().joinedInviteCode) == 'teacher' ? inviteDoc(incoming().joinedInviteCode).classId : '')
+              )
+            )
+          )
+        );
+      allow delete: if isVerified() && isValidId(accessId) && isAdmin() && existing().email != 'minhtrangdongthanh@gmail.com';
+    }
+
+    // 3. Classes Collection (Operational school reads for active Google users & link visitors)
+    match /classes/{classId} {
+      allow get: if (!isSignedIn() || isActiveUser() || isAuthenticatedAccountant()) && isValidId(classId) && (resource == null || (existing().schoolId == 'THCS_DONG_THANH' && existing().visibility == 'school'));
+      allow list: if (!isSignedIn() || isActiveUser() || isAuthenticatedAccountant()) && existing().schoolId == 'THCS_DONG_THANH' && existing().visibility == 'school';
+      allow create: if isVerified() && isValidId(classId) &&
+        isValidSchoolClass(incoming()) &&
+        incoming().id == classId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        isAdmin();
+      allow update: if isVerified() && isValidId(classId) &&
+        isValidSchoolClass(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().schoolId == existing().schoolId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        isAdmin();
+      allow delete: if isVerified() && isValidId(classId) && isAdmin();
+    }
+
+    // 4. Students Collection (Admin & Authorized Group Writes; Operational school reads for active Google users & link sessions)
+    match /students/{studentId} {
+      allow get: if (!isSignedIn() || isActiveUser() || isAuthenticatedAccountant()) && isValidId(studentId) && (resource == null || (existing().schoolId == 'THCS_DONG_THANH' && existing().visibility == 'school'));
+      allow list: if (!isSignedIn() || isActiveUser() || isAuthenticatedAccountant()) && existing().schoolId == 'THCS_DONG_THANH' && existing().visibility == 'school';
+      allow create: if isValidId(studentId) &&
+        isValidStudent(incoming()) &&
+        incoming().id == studentId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        (
+          (isVerified() && (isAdmin() || (hasGroupModule('students') && hasGroupFlag('canManageStudents')))) ||
+          isAuthorizedInviteActor(incoming().updatedByUid, 'students', 'canManageStudents', '', '')
+        );
+      allow update: if isValidId(studentId) &&
+        isValidStudent(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().schoolId == existing().schoolId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        (
+          (isVerified() && (isAdmin() || (hasGroupModule('students') && hasGroupFlag('canManageStudents')))) ||
+          isAuthorizedInviteActor(incoming().updatedByUid, 'students', 'canManageStudents', '', '')
+        );
+      allow delete: if isVerified() && isValidId(studentId) && (isAdmin() || (hasGroupModule('students') && hasGroupFlag('canManageStudents')));
+    }
+
+    // 5. Meal Registrations Collection (Unique Student + Date; GVCN link/account strictly scoped to assigned class, unlocked day & unlocked settled month)
+    match /registrations/{registrationId} {
+      allow get: if (!isSignedIn() || isActiveUser() || isAuthenticatedAccountant()) && isValidId(registrationId) && (resource == null || (existing().schoolId == 'THCS_DONG_THANH' && existing().visibility == 'school'));
+      allow list: if (!isSignedIn() || isActiveUser() || isAuthenticatedAccountant()) && existing().schoolId == 'THCS_DONG_THANH' && existing().visibility == 'school';
+      allow create: if isValidId(registrationId) &&
+        isValidMealRegistration(incoming()) &&
+        incoming().id == registrationId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        (
+          (isVerified() && (
+            isAdmin() ||
+            (isTeacherForClass(incoming().classId) && !isReportLocked(incoming().env, incoming().date) && !isMonthLocked(incoming().env, incoming().date)) ||
+            (hasGroupModule('teacher') && hasGroupFlag('canMarkAttendance') && !isReportLocked(incoming().env, incoming().date) && !isMonthLocked(incoming().env, incoming().date))
+          )) ||
+          (
+            isAuthorizedInviteActor(incoming().updatedByUid, 'teacher', 'canMarkAttendance', incoming().classId, incoming().updatedByRole) &&
+            !isReportLocked(incoming().env, incoming().date) &&
+            !isMonthLocked(incoming().env, incoming().date)
+          )
+        );
+      allow update: if isValidId(registrationId) &&
+        isValidMealRegistration(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().date == existing().date &&
+        incoming().studentId == existing().studentId &&
+        incoming().schoolId == existing().schoolId &&
+        incoming().env == existing().env &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        (
+          (isVerified() && (
+            isAdmin() ||
+            (
+              isTeacherForClass(existing().classId) &&
+              incoming().classId == existing().classId &&
+              !isReportLocked(existing().env, existing().date) &&
+              !isMonthLocked(existing().env, existing().date)
+            ) ||
+            (
+              hasGroupModule('teacher') &&
+              hasGroupFlag('canMarkAttendance') &&
+              incoming().classId == existing().classId &&
+              !isReportLocked(existing().env, existing().date) &&
+              !isMonthLocked(existing().env, existing().date)
+            )
+          )) ||
+          (
+            incoming().classId == existing().classId &&
+            isAuthorizedInviteActor(incoming().updatedByUid, 'teacher', 'canMarkAttendance', existing().classId, incoming().updatedByRole) &&
+            !isReportLocked(existing().env, existing().date) &&
+            !isMonthLocked(existing().env, existing().date)
+          )
+        );
+      allow delete: if isVerified() && isValidId(registrationId) && isAdmin();
+    }
+
+    // 6. Registration Audit Logs Collection (Immutable in Production)
+    match /registrationLogs/{logId} {
+      allow get: if (!isSignedIn() || isActiveUser() || isAuthenticatedAccountant()) && isValidId(logId) && (resource == null || (existing().schoolId == 'THCS_DONG_THANH' && existing().visibility == 'school'));
+      allow list: if (!isSignedIn() || isActiveUser() || isAuthenticatedAccountant()) && existing().schoolId == 'THCS_DONG_THANH' && existing().visibility == 'school';
+      allow create: if isValidId(logId) &&
+        isValidRegistrationLog(incoming()) &&
+        incoming().id == logId &&
+        incoming().createdAt == request.time &&
+        (
+          (isVerified() && (
+            isAdmin() ||
+            isTeacherForClass(incoming().classId) ||
+            (hasGroupModule('teacher') && hasGroupFlag('canMarkAttendance')) ||
+            (hasGroupModule('students') && hasGroupFlag('canManageStudents'))
+          )) ||
+          isAuthorizedInviteActor(incoming().actorUid, 'teacher', 'canMarkAttendance', incoming().classId, incoming().actorRole) ||
+          isAuthorizedInviteActor(incoming().actorUid, 'students', 'canManageStudents', '', incoming().actorRole)
+        );
+      allow update: if false;
+      allow delete: if isVerified() && isValidId(logId) && isAdmin() && existing().env == 'sandbox';
+    }
+
+    // 7. Daily Reports Collection (08:00 Lock & Admin Reopen)
+    match /dailyReports/{reportId} {
+      allow get: if (!isSignedIn() || isActiveUser() || isAuthenticatedAccountant()) && isValidId(reportId) && (resource == null || (existing().schoolId == 'THCS_DONG_THANH' && existing().visibility == 'school'));
+      allow list: if (!isSignedIn() || isActiveUser() || isAuthenticatedAccountant()) && existing().schoolId == 'THCS_DONG_THANH' && existing().visibility == 'school';
+      allow create: if isVerified() && isValidId(reportId) &&
+        isValidDailyReport(incoming()) &&
+        incoming().id == reportId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        isAdmin();
+      allow update: if isVerified() && isValidId(reportId) &&
+        isValidDailyReport(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().date == existing().date &&
+        incoming().env == existing().env &&
+        incoming().schoolId == existing().schoolId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        isAdmin();
+      allow delete: if isVerified() && isValidId(reportId) && isAdmin();
+    }
+
+    // 8. Archived Academic Years Collection (Auto-backup before annual student reset)
+    match /archivedYears/{archiveId} {
+      allow get: if (!isSignedIn() || isActiveUser() || isAuthenticatedAccountant()) && isValidId(archiveId) && (resource == null || (existing().schoolId == 'THCS_DONG_THANH' && existing().visibility == 'school'));
+      allow list: if (!isSignedIn() || isActiveUser() || isAuthenticatedAccountant()) && existing().schoolId == 'THCS_DONG_THANH' && existing().visibility == 'school';
+      allow create: if isVerified() && isValidId(archiveId) &&
+        isValidArchivedYearSnapshot(incoming()) &&
+        incoming().id == archiveId &&
+        incoming().createdAt == request.time &&
+        isAdmin();
+      allow update: if false;
+      allow delete: if isVerified() && isValidId(archiveId) && isAdmin();
+    }
+
+    // 9. School Settings Collection
+    match /settings/{settingId} {
+      allow get: if (!isSignedIn() || isActiveUser() || isAuthenticatedAccountant()) && isValidId(settingId) && (resource == null || (existing().schoolId == 'THCS_DONG_THANH' && existing().visibility == 'school'));
+      allow list: if (!isSignedIn() || isActiveUser() || isAuthenticatedAccountant()) && existing().schoolId == 'THCS_DONG_THANH' && existing().visibility == 'school';
+      allow create: if isVerified() && isValidId(settingId) &&
+        isValidSchoolSetting(incoming()) &&
+        incoming().id == settingId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        isAdmin();
+      allow update: if isVerified() && isValidId(settingId) &&
+        isValidSchoolSetting(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().schoolId == existing().schoolId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        isAdmin();
+      allow delete: if isVerified() && isValidId(settingId) && isAdmin();
+    }
+
+    // 10. Deletion Tombstones Collection (Cross-device anti-resurrection registry)
+    match /deletionTombstones/{tombstoneId} {
+      allow get: if (!isSignedIn() || isActiveUser() || isAuthenticatedAccountant()) && isValidId(tombstoneId) && (resource == null || (existing().schoolId == 'THCS_DONG_THANH' && existing().visibility == 'school'));
+      allow list: if (!isSignedIn() || isActiveUser() || isAuthenticatedAccountant()) && existing().schoolId == 'THCS_DONG_THANH' && existing().visibility == 'school';
+      allow create: if isVerified() && isValidId(tombstoneId) &&
+        isValidDeletionTombstone(incoming()) &&
+        incoming().id == tombstoneId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        (
+          isAdmin() ||
+          (incoming().collectionName == 'students' && hasGroupModule('students') && hasGroupFlag('canManageStudents')) ||
+          (incoming().collectionName == 'classInvites' && hasGroupFlag('canShareClassCode')) ||
+          (incoming().collectionName == 'mealPricingRules' && hasGroupModule('monthly_billing') && hasGroupFlag('canManageMealPricing'))
+        );
+      allow update: if isVerified() && isValidId(tombstoneId) &&
+        isValidDeletionTombstone(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().collectionName == existing().collectionName &&
+        incoming().documentId == existing().documentId &&
+        incoming().schoolId == existing().schoolId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        (
+          isAdmin() ||
+          (existing().collectionName == 'students' && hasGroupModule('students') && hasGroupFlag('canManageStudents')) ||
+          (existing().collectionName == 'classInvites' && hasGroupFlag('canShareClassCode')) ||
+          (existing().collectionName == 'mealPricingRules' && hasGroupModule('monthly_billing') && hasGroupFlag('canManageMealPricing'))
+        );
+      allow delete: if isVerified() && isValidId(tombstoneId) && (
+        isAdmin() ||
+        (existing().collectionName == 'students' && hasGroupModule('students') && hasGroupFlag('canManageStudents')) ||
+        (existing().collectionName == 'classInvites' && hasGroupFlag('canShareClassCode')) ||
+        (existing().collectionName == 'mealPricingRules' && hasGroupModule('monthly_billing') && hasGroupFlag('canManageMealPricing'))
+      );
+    }
+
+    // 11. Permission Groups Collection (4 Role Groups mapped to App Modules)
+    match /permissionGroups/{groupId} {
+      allow get: if (!isSignedIn() || isActiveUser() || isAuthenticatedAccountant()) && isValidId(groupId) && (resource == null || (existing().schoolId == 'THCS_DONG_THANH' && existing().visibility == 'school'));
+      allow list: if (!isSignedIn() || isActiveUser() || isAuthenticatedAccountant()) && existing().schoolId == 'THCS_DONG_THANH' && existing().visibility == 'school';
+      allow create: if isVerified() && isValidId(groupId) &&
+        isValidPermissionGroup(incoming()) &&
+        incoming().id == groupId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        isAdmin() &&
+        (groupId != 'admin' || ('users' in incoming().allowedModules && 'admin' in incoming().allowedModules));
+      allow update: if isVerified() && isValidId(groupId) &&
+        isValidPermissionGroup(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().schoolId == existing().schoolId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        isAdmin() &&
+        (groupId != 'admin' || ('users' in incoming().allowedModules && 'admin' in incoming().allowedModules));
+      allow delete: if false;
+    }
+
+    // 12. Class Invites Collection (Shareable codes/links/QR for Members; single-doc get for link validation, list/manage for Admin & authorized sharers)
+    match /classInvites/{inviteId} {
+      allow get: if isValidId(inviteId) && (
+        (isVerified() && (isAdmin() || hasGroupFlag('canShareClassCode'))) ||
+        (isAuthenticatedInvite() && request.auth.token.inviteCode == inviteId) ||
+        (resource == null || (existing().schoolId == 'THCS_DONG_THANH' && existing().visibility == 'school'))
+      );
+      allow list: if isVerified() && (isAdmin() || hasGroupFlag('canShareClassCode')) && existing().schoolId == 'THCS_DONG_THANH' && existing().visibility == 'school';
+      allow create: if isVerified() && isValidId(inviteId) &&
+        isValidClassInvite(incoming()) &&
+        incoming().id == inviteId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        (isAdmin() || hasGroupFlag('canShareClassCode'));
+      allow update: if isValidId(inviteId) &&
+        isValidClassInvite(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().code == existing().code &&
+        incoming().classId == existing().classId &&
+        incoming().schoolId == existing().schoolId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        (
+          (isVerified() && (isAdmin() || hasGroupFlag('canShareClassCode'))) ||
+          (
+            existing().active == true &&
+            incoming().active == existing().active &&
+            incoming().get('role', 'teacher') == existing().get('role', 'teacher') &&
+            incoming().usageCount == existing().usageCount + 1 &&
+            (
+              (isVerified() && !hasAccountTombstone(authEmailKey()) && incoming().lastUsedByEmail == request.auth.token.email.lower()) ||
+              (!isSignedIn() && incoming().lastUsedByEmail == 'Truy cập theo link')
+            ) &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['usageCount', 'lastUsedByEmail', 'lastUsedAtIso', 'updatedAtIso', 'updatedAt'])
+          )
+        );
+      allow delete: if isVerified() && isValidId(inviteId) && (isAdmin() || hasGroupFlag('canShareClassCode'));
+    }
+
+    // 13. Meal Pricing Rules Collection
+    match /mealPricingRules/{ruleId} {
+      allow get: if (!isSignedIn() || isActiveUser() || isAuthenticatedAccountant()) && isValidId(ruleId) && (resource == null || (existing().schoolId == 'THCS_DONG_THANH' && existing().visibility == 'school'));
+      allow list: if (!isSignedIn() || isActiveUser() || isAuthenticatedAccountant()) && existing().schoolId == 'THCS_DONG_THANH' && existing().visibility == 'school';
+      allow create: if isVerified() && isValidId(ruleId) &&
+        isValidMealPricingRule(incoming()) &&
+        incoming().id == ruleId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        !isSettlementMonthLocked(incoming().env, incoming().effectiveFrom[0:7]) &&
+        (isAdmin() || (hasGroupModule('monthly_billing') && hasGroupFlag('canManageMealPricing')));
+      allow update: if isVerified() && isValidId(ruleId) &&
+        isValidMealPricingRule(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().schoolId == existing().schoolId &&
+        incoming().env == existing().env &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        !isSettlementMonthLocked(existing().env, existing().effectiveFrom[0:7]) &&
+        !isSettlementMonthLocked(incoming().env, incoming().effectiveFrom[0:7]) &&
+        (isAdmin() || (hasGroupModule('monthly_billing') && hasGroupFlag('canManageMealPricing')));
+      allow delete: if isVerified() && isValidId(ruleId) &&
+        !isSettlementMonthLocked(existing().env, existing().effectiveFrom[0:7]) &&
+        (isAdmin() || (hasGroupModule('monthly_billing') && hasGroupFlag('canManageMealPricing')));
+    }
+
+    // 14. Meal Pricing Audit Logs Collection (Immutable)
+    match /mealPricingLogs/{logId} {
+      allow get: if (!isSignedIn() || isActiveUser() || isAuthenticatedAccountant()) && isValidId(logId) && (resource == null || (existing().schoolId == 'THCS_DONG_THANH' && existing().visibility == 'school'));
+      allow list: if (!isSignedIn() || isActiveUser() || isAuthenticatedAccountant()) && existing().schoolId == 'THCS_DONG_THANH' && existing().visibility == 'school';
+      allow create: if isVerified() && isValidId(logId) &&
+        isValidMealPricingLog(incoming()) &&
+        incoming().id == logId &&
+        incoming().createdAt == request.time &&
+        (isAdmin() || (hasGroupModule('monthly_billing') && hasGroupFlag('canManageMealPricing')));
+      allow update: if false;
+      allow delete: if isVerified() && isValidId(logId) && isAdmin() && existing().env == 'sandbox';
+    }
+
+    // 15. Meal Billing Configs Collection (Holidays & Symbol Descriptions)
+    match /mealBillingConfigs/{configId} {
+      allow get: if (!isSignedIn() || isActiveUser() || isAuthenticatedAccountant()) && isValidId(configId) && (resource == null || (existing().schoolId == 'THCS_DONG_THANH' && existing().visibility == 'school'));
+      allow list: if (!isSignedIn() || isActiveUser() || isAuthenticatedAccountant()) && existing().schoolId == 'THCS_DONG_THANH' && existing().visibility == 'school';
+      allow create: if isVerified() && isValidId(configId) &&
+        isValidMealBillingConfig(incoming()) &&
+        incoming().id == configId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        (isAdmin() || (hasGroupModule('monthly_billing') && hasGroupFlag('canManageMealPricing')));
+      allow update: if isVerified() && isValidId(configId) &&
+        isValidMealBillingConfig(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().schoolId == existing().schoolId &&
+        incoming().env == existing().env &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        (isAdmin() || (hasGroupModule('monthly_billing') && hasGroupFlag('canManageMealPricing')));
+      allow delete: if isVerified() && isValidId(configId) && isAdmin() && existing().env == 'sandbox';
+    }
+
+    // 16. Meal Payments Collection (Receipt tracking + optimistic concurrency version + settled lock)
+    match /mealPayments/{paymentId} {
+      allow get: if (!isSignedIn() || isActiveUser() || isAuthenticatedAccountant()) && isValidId(paymentId) && (resource == null || (existing().schoolId == 'THCS_DONG_THANH' && existing().visibility == 'school'));
+      allow list: if (!isSignedIn() || isActiveUser() || isAuthenticatedAccountant()) && existing().schoolId == 'THCS_DONG_THANH' && existing().visibility == 'school';
+      allow create: if isValidId(paymentId) &&
+        isValidMealPayment(incoming()) &&
+        incoming().id == paymentId &&
+        incoming().version == 1 &&
+        incoming().isVoided == false &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        (
+          (isVerified() && (
+            isAdmin() ||
+            (!isSettlementMonthLocked(incoming().env, incoming().month) && hasGroupModule('monthly_billing') && hasGroupFlag('canCollectPayments'))
+          )) ||
+          (
+            isAuthorizedInviteActor(incoming().collectorUid, 'monthly_billing', 'canCollectPayments', '', incoming().collectorRole) &&
+            !isSettlementMonthLocked(incoming().env, incoming().month)
+          )
+        );
+      allow update: if isValidId(paymentId) &&
+        isValidMealPayment(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().month == existing().month &&
+        incoming().studentId == existing().studentId &&
+        incoming().schoolId == existing().schoolId &&
+        incoming().env == existing().env &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().version == existing().version + 1 &&
+        (
+          (isVerified() && (
+            isAdmin() ||
+            (!isSettlementMonthLocked(existing().env, existing().month) && hasGroupModule('monthly_billing') && hasGroupFlag('canCollectPayments'))
+          )) ||
+          (
+            isAuthorizedInviteActor(incoming().collectorUid, 'monthly_billing', 'canCollectPayments', '', incoming().collectorRole) &&
+            !isSettlementMonthLocked(existing().env, existing().month)
+          )
+        );
+      allow delete: if isVerified() && isValidId(paymentId) && isAdmin() && existing().env == 'sandbox';
+    }
+
+    // 17. Meal Payment Logs Collection (Immutable Audit Trail)
+    match /mealPaymentLogs/{logId} {
+      allow get: if (!isSignedIn() || isActiveUser() || isAuthenticatedAccountant()) && isValidId(logId) && (resource == null || (existing().schoolId == 'THCS_DONG_THANH' && existing().visibility == 'school'));
+      allow list: if (!isSignedIn() || isActiveUser() || isAuthenticatedAccountant()) && existing().schoolId == 'THCS_DONG_THANH' && existing().visibility == 'school';
+      allow create: if isValidId(logId) &&
+        isValidMealPaymentLog(incoming()) &&
+        incoming().id == logId &&
+        incoming().createdAt == request.time &&
+        (
+          (isVerified() && (
+            isAdmin() ||
+            (hasGroupModule('monthly_billing') && hasGroupFlag('canCollectPayments'))
+          )) ||
+          isAuthorizedInviteActor(incoming().actorUid, 'monthly_billing', 'canCollectPayments', '', incoming().actorRole)
+        );
+      allow update: if false;
+      allow delete: if isVerified() && isValidId(logId) && isAdmin() && existing().env == 'sandbox';
+    }
+
+    // 18. Monthly Settlements Collection (Settled Month Lock / Unlock)
+    match /monthlySettlements/{settlementId} {
+      allow get: if (!isSignedIn() || isActiveUser() || isAuthenticatedAccountant()) && isValidId(settlementId) && (resource == null || (existing().schoolId == 'THCS_DONG_THANH' && existing().visibility == 'school'));
+      allow list: if (!isSignedIn() || isActiveUser() || isAuthenticatedAccountant()) && existing().schoolId == 'THCS_DONG_THANH' && existing().visibility == 'school';
+      allow create: if isVerified() && isValidId(settlementId) &&
+        isValidMonthlySettlement(incoming()) &&
+        incoming().id == settlementId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        (isAdmin() || (hasGroupModule('monthly_billing') && hasGroupFlag('canManageMealPricing')));
+      allow update: if isVerified() && isValidId(settlementId) &&
+        isValidMonthlySettlement(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().month == existing().month &&
+        incoming().env == existing().env &&
+        incoming().schoolId == existing().schoolId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        (isAdmin() || (hasGroupModule('monthly_billing') && hasGroupFlag('canManageMealPricing')));
+      allow delete: if isVerified() && isValidId(settlementId) && isAdmin() && existing().env == 'sandbox';
+    }
+  }
+}
